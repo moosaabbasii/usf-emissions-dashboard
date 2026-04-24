@@ -55,12 +55,11 @@ def kpi(label,value,sub,color):
     return f'<div class="kpi-card" style="border-color:{color}"><div class="kpi-label">{label}</div><div class="kpi-value">{value}</div><div class="kpi-sub">{sub}</div></div>'
 
 # ── FILE PATHS ────────────────────────────────
-BASE = r"C:\Users\moosa\OneDrive - University of South Florida\Desktop\Research Dashboard"
 PATHS = {
-    "logistics":  BASE + r"\synthetic_logistics_emissions_data.csv",
-    "business":   BASE + r"\synthetic_business_travel_data_v2.csv",
-    "commute":    BASE + r"\synthetic_commute_data_v2.csv",
-    "downstream": BASE + r"\synthetic_downstream_transport_data_v2.csv",
+    "logistics":  "synthetic_logistics_emissions_data.csv",
+    "business":   "synthetic_business_travel_data_v2.csv",
+    "commute":    "synthetic_commute_data_v2.csv",
+    "downstream": "synthetic_downstream_transport_data_v2.csv",
 }
 
 # ── SIDEBAR ───────────────────────────────────
