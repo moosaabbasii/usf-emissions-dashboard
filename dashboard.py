@@ -74,7 +74,7 @@ with st.sidebar:
         "Scope 3 — Cat 6: Business Travel",
         "Scope 3 — Cat 7: Commute",
         "Scope 3 — Cat 9: Downstream Transport",
-        "Scope 3 — EV Transport",
+        "Scope 1 — EV Transport",
     ], label_visibility="collapsed")
     st.markdown("---")
     st.caption("USF / Patel's College\nGlobal Sustainability Research\nGHG Protocol (WRI/WBCSD)")
@@ -127,7 +127,7 @@ if page == "Overview":
     c4,c5,c6 = st.columns(3)
     with c4: st.markdown(kpi("Cat 7 Commute",f"{totals['commute']:,.1f}","tonnes CO₂e","#8b5cf6"),unsafe_allow_html=True)
     with c5: st.markdown(kpi("Cat 9 Downstream",f"{totals['downstream']:,.1f}","tonnes CO₂e","#ef4444"),unsafe_allow_html=True)
-    with c6: st.markdown(kpi("EV Transport",f"{totals['ev']:,.1f}","tonnes CO₂e","#06b6d4"),unsafe_allow_html=True)
+    with c6: st.markdown(kpi("Scope 1 — EV Transport",f"{totals['ev']:,.1f}","tonnes CO₂e","#06b6d4"),unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -137,7 +137,7 @@ if page == "Overview":
         "Cat 6 Business Travel":"#f59e0b",
         "Cat 7 Commute":       "#8b5cf6",
         "Cat 9 Downstream":    "#ef4444",
-        "EV Transport":        "#06b6d4",
+        "Scope 1 — EV Transport": "#06b6d4",
     }
     scope_df = pd.DataFrame({
         "Category": list(CAT_COLORS.keys()),
@@ -542,11 +542,11 @@ elif page == "Scope 3 — Cat 9: Downstream Transport":
     </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════
-# EV TRANSPORT PAGE
+# SCOPE 1 EV TRANSPORT PAGE
 # ══════════════════════════════════════════════
-elif page == "Scope 3 — EV Transport":
+elif page == "Scope 1 — EV Transport":
     df,agg = get("ev")
-    st.markdown("# EV Transport Emissions")
+    st.markdown("# Scope 1 — EV Transport Emissions")
     st.markdown("*Emissions sourced from pre-calculated dataset fields (gasoline, diesel, electric, hybrid)*")
     if df is None: st.error(errors.get("ev","Unknown error")); st.stop()
 
