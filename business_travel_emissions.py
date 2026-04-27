@@ -44,7 +44,7 @@ def calculate_emissions(df):
         elif "car" in mode or "road" in mode or "taxi" in mode or "cab" in mode or "rental" in mode: return dist * ROAD_EF
         else: return dist * ROAD_EF  # default
     df["co2_kg"] = df.apply(ef, axis=1)
-    df["co2_tonnes"] = df["co2_kg"] / 1000
+    df["co2_tonnes"] = df["co2_kg"]  # display in kg CO2
     return df
 
 def aggregate(df):

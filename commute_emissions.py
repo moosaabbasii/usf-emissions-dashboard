@@ -43,7 +43,7 @@ def calculate_emissions(df):
     # Annual emissions per employee
     df["annual_miles"] = df["round_trip_distance_miles"] * df["days_onsite_per_week"] * 52
     df["co2_kg"] = (df["annual_miles"] * df["mode_factor"]) / df["occupancy"]
-    df["co2_tonnes"] = df["co2_kg"] / 1000
+    df["co2_tonnes"] = df["co2_kg"]  # display in kg CO2
     return df
 
 def aggregate(df):

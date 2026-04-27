@@ -121,13 +121,13 @@ if page == "Overview":
     grand_total = sum(totals.values())
 
     c1,c2,c3 = st.columns(3)
-    with c1: st.markdown(kpi("Grand Total",f"{grand_total:,.1f}","tonnes CO₂e","#10b981"),unsafe_allow_html=True)
-    with c2: st.markdown(kpi("Cat 4 Logistics",f"{totals['logistics']:,.1f}","tonnes CO₂e","#3b82f6"),unsafe_allow_html=True)
-    with c3: st.markdown(kpi("Cat 6 Business Travel",f"{totals['business']:,.1f}","tonnes CO₂e","#f59e0b"),unsafe_allow_html=True)
+    with c1: st.markdown(kpi("Grand Total",f"{grand_total:,.0f}","kg CO₂","#10b981"),unsafe_allow_html=True)
+    with c2: st.markdown(kpi("Cat 4 Logistics",f"{totals['logistics']:,.0f}","kg CO₂","#3b82f6"),unsafe_allow_html=True)
+    with c3: st.markdown(kpi("Cat 6 Business Travel",f"{totals['business']:,.0f}","kg CO₂","#f59e0b"),unsafe_allow_html=True)
     c4,c5,c6 = st.columns(3)
-    with c4: st.markdown(kpi("Cat 7 Commute",f"{totals['commute']:,.1f}","tonnes CO₂e","#8b5cf6"),unsafe_allow_html=True)
-    with c5: st.markdown(kpi("Cat 9 Downstream",f"{totals['downstream']:,.1f}","tonnes CO₂e","#ef4444"),unsafe_allow_html=True)
-    with c6: st.markdown(kpi("Scope 1 — EV Transport",f"{totals['ev']:,.1f}","tonnes CO₂e","#06b6d4"),unsafe_allow_html=True)
+    with c4: st.markdown(kpi("Cat 7 Commute",f"{totals['commute']:,.0f}","kg CO₂","#8b5cf6"),unsafe_allow_html=True)
+    with c5: st.markdown(kpi("Cat 9 Downstream",f"{totals['downstream']:,.0f}","kg CO₂","#ef4444"),unsafe_allow_html=True)
+    with c6: st.markdown(kpi("Scope 1 — EV Transport",f"{totals['ev']:,.0f}","kg CO₂","#06b6d4"),unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -153,7 +153,7 @@ if page == "Overview":
     with col2:
         fig2 = px.bar(scope_df.sort_values("CO2_tonnes"),x="CO2_tonnes",y="Category",orientation="h",
                       color="Category",color_discrete_map=CAT_COLORS,
-                      labels={"CO2_tonnes":"Tonnes CO₂e","Category":""})
+                      labels={"CO2_tonnes":"kg CO₂","Category":""})
         fig2.update_traces(showlegend=False)
         fig2 = T(fig2,"Emissions by Scope 3 Category")
         st.plotly_chart(fig2,use_container_width=True)
@@ -192,7 +192,7 @@ elif page == "Scope 3 — Cat 4: Logistics":
     st.markdown("---")
 
     k1,k2,k3,k4=st.columns(4)
-    with k1: st.metric("Total Emissions",f"{fdf['co2_tonnes'].sum():,.2f} t CO₂e")
+    with k1: st.metric("Total Emissions",f"{fdf['co2_tonnes'].sum():,.0f} kg CO₂")
     with k2: st.metric("Shipments",f"{len(fdf):,}")
     with k3: st.metric("Avg Distance",f"{fdf['distance_traveled'].mean():,.0f} miles")
     with k4: st.metric("Total Invoice",f"${fdf['invoice_amount_usd'].sum():,.0f}")
@@ -203,7 +203,7 @@ elif page == "Scope 3 — Cat 4: Logistics":
     bm=fdf.groupby("mode_of_transport")["co2_tonnes"].sum().reset_index().sort_values("co2_tonnes",ascending=False)
     bm["mode_of_transport"]=bm["mode_of_transport"].str.capitalize()
     f1=px.bar(bm,x="mode_of_transport",y="co2_tonnes",color="mode_of_transport",color_discrete_sequence=COLORS,
-              text="co2_tonnes",labels={"mode_of_transport":"Mode","co2_tonnes":"Tonnes CO₂e"})
+              text="co2_tonnes",labels={"mode_of_transport":"Mode","co2_tonnes":"kg CO₂"})
     f1.update_traces(texttemplate="%{text:,.1f}",textposition="outside",showlegend=False,textfont_color=TEXT)
     st.plotly_chart(T(f1,"Emissions by Mode of Transport"),use_container_width=True)
     st.markdown("---")
@@ -215,11 +215,11 @@ elif page == "Scope 3 — Cat 4: Logistics":
         fdf2=fdf.copy()
         fdf2["volume_bin"]=pd.qcut(fdf2["shipment_volume_ctf"],q=4,labels=["Small","Medium","Large","X-Large"],duplicates="drop")
         vagg=fdf2.groupby("volume_bin",observed=True)["co2_tonnes"].sum().reset_index()
-        f2=px.bar(vagg,x="volume_bin",y="co2_tonnes",color="volume_bin",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"volume_bin":"Volume Quartile","co2_tonnes":"Tonnes CO₂e"})
+        f2=px.bar(vagg,x="volume_bin",y="co2_tonnes",color="volume_bin",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"volume_bin":"Volume Quartile","co2_tonnes":"kg CO₂"})
         f2.update_traces(texttemplate="%{text:,.1f}",textposition="outside",showlegend=False,textfont_color=TEXT)
         st.plotly_chart(T(f2,"Emissions by Volume Quartile"),use_container_width=True)
     with col2:
-        f2b=px.scatter(fdf,x="shipment_volume_ctf",y="co2_tonnes",color="mode_of_transport",color_discrete_sequence=COLORS,opacity=0.5,labels={"shipment_volume_ctf":"Volume (cu ft)","co2_tonnes":"Tonnes CO₂e","mode_of_transport":"Mode"})
+        f2b=px.scatter(fdf,x="shipment_volume_ctf",y="co2_tonnes",color="mode_of_transport",color_discrete_sequence=COLORS,opacity=0.5,labels={"shipment_volume_ctf":"Volume (cu ft)","co2_tonnes":"kg CO₂","mode_of_transport":"Mode"})
         st.plotly_chart(T(f2b,"Volume vs Emissions by Mode"),use_container_width=True)
     st.markdown("---")
 
@@ -235,7 +235,7 @@ elif page == "Scope 3 — Cat 4: Logistics":
         st.plotly_chart(f3,use_container_width=True)
     with col2:
         f3b=px.bar(bc.head(10),x="co2_tonnes",y="carrier_name",orientation="h",text="pct",
-                   color="co2_tonnes",color_continuous_scale=[[0,"#1e3a5f"],[1,"#3b82f6"]],labels={"co2_tonnes":"Tonnes CO₂e","carrier_name":""})
+                   color="co2_tonnes",color_continuous_scale=[[0,"#1e3a5f"],[1,"#3b82f6"]],labels={"co2_tonnes":"kg CO₂","carrier_name":""})
         f3b.update_traces(texttemplate="%{text}%",textposition="outside",textfont_color=TEXT)
         f3b.update_layout(coloraxis_showscale=False)
         st.plotly_chart(T(f3b,"Top Carriers by Emissions"),use_container_width=True)
@@ -248,7 +248,7 @@ elif page == "Scope 3 — Cat 4: Logistics":
     col1,col2=st.columns([3,2])
     with col1:
         f4=px.bar(br,x="co2_tonnes",y="route",orientation="h",text="pct",color="co2_tonnes",
-                  color_continuous_scale=[[0,"#064e3b"],[1,"#10b981"]],labels={"co2_tonnes":"Tonnes CO₂e","route":""})
+                  color_continuous_scale=[[0,"#064e3b"],[1,"#10b981"]],labels={"co2_tonnes":"kg CO₂","route":""})
         f4.update_traces(texttemplate="%{text}%",textposition="outside",textfont_color=TEXT)
         f4.update_layout(coloraxis_showscale=False,height=500)
         st.plotly_chart(T(f4,"Top 15 Routes by Emissions"),use_container_width=True)
@@ -270,7 +270,7 @@ elif page == "Scope 3 — Cat 4: Logistics":
         f5.update_traces(texttemplate="$%{text:,.0f}",textposition="outside",showlegend=False,textfont_color=TEXT)
         st.plotly_chart(T(f5,"Invoice by Transport Mode"),use_container_width=True)
     with col2:
-        f5b=px.scatter(fdf,x="invoice_amount_usd",y="co2_tonnes",color="mode_of_transport",color_discrete_sequence=COLORS,opacity=0.5,trendline="ols",trendline_scope="overall",trendline_color_override="#f9fafb",labels={"invoice_amount_usd":"Invoice ($)","co2_tonnes":"Tonnes CO₂e","mode_of_transport":"Mode"})
+        f5b=px.scatter(fdf,x="invoice_amount_usd",y="co2_tonnes",color="mode_of_transport",color_discrete_sequence=COLORS,opacity=0.5,trendline="ols",trendline_scope="overall",trendline_color_override="#f9fafb",labels={"invoice_amount_usd":"Invoice ($)","co2_tonnes":"kg CO₂","mode_of_transport":"Mode"})
         st.plotly_chart(T(f5b,"Invoice vs Emissions"),use_container_width=True)
     cd=cm[["mode_of_transport","invoice","co2_tonnes","cost_per_tonne"]].copy()
     cd.columns=["Mode","Total Invoice ($)","CO₂ (t)","$/tonne CO₂e"]
@@ -299,7 +299,7 @@ elif page == "Scope 3 — Cat 6: Business Travel":
     st.markdown("---")
 
     k1,k2,k3,k4=st.columns(4)
-    with k1: st.metric("Total Emissions",f"{fdf['co2_tonnes'].sum():,.2f} t CO₂e")
+    with k1: st.metric("Total Emissions",f"{fdf['co2_tonnes'].sum():,.0f} kg CO₂")
     with k2: st.metric("Trips",f"{len(fdf):,}")
     with k3: st.metric("Avg Distance",f"{fdf['distance_traveled'].mean():,.0f} miles")
     with k4: st.metric("Total Invoice",f"${fdf['invoice_amount_usd'].sum():,.0f}")
@@ -311,7 +311,7 @@ elif page == "Scope 3 — Cat 6: Business Travel":
     bm["pct"]=(bm["co2_tonnes"]/bm["co2_tonnes"].sum()*100).round(1)
     col1,col2=st.columns(2)
     with col1:
-        f1=px.bar(bm,x="travel_mode",y="co2_tonnes",color="travel_mode",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"travel_mode":"Mode","co2_tonnes":"Tonnes CO₂e"})
+        f1=px.bar(bm,x="travel_mode",y="co2_tonnes",color="travel_mode",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"travel_mode":"Mode","co2_tonnes":"kg CO₂"})
         f1.update_traces(texttemplate="%{text:,.2f}",textposition="outside",showlegend=False,textfont_color=TEXT)
         st.plotly_chart(T(f1,"Emissions by Travel Mode"),use_container_width=True)
     with col2:
@@ -327,7 +327,7 @@ elif page == "Scope 3 — Cat 6: Business Travel":
     bp["pct"]=(bp["co2_tonnes"]/bp["co2_tonnes"].sum()*100).round(1)
     col1,col2=st.columns(2)
     with col1:
-        f2=px.bar(bp,x="trip_purpose",y="co2_tonnes",color="trip_purpose",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"trip_purpose":"Purpose","co2_tonnes":"Tonnes CO₂e"})
+        f2=px.bar(bp,x="trip_purpose",y="co2_tonnes",color="trip_purpose",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"trip_purpose":"Purpose","co2_tonnes":"kg CO₂"})
         f2.update_traces(texttemplate="%{text:,.2f}",textposition="outside",showlegend=False,textfont_color=TEXT)
         st.plotly_chart(T(f2,"Emissions by Trip Purpose"),use_container_width=True)
     with col2:
@@ -344,7 +344,7 @@ elif page == "Scope 3 — Cat 6: Business Travel":
     col1,col2=st.columns([3,2])
     with col1:
         f3=px.bar(br,x="co2_tonnes",y="route",orientation="h",text="pct",color="co2_tonnes",
-                  color_continuous_scale=[[0,"#1e3a5f"],[1,"#f59e0b"]],labels={"co2_tonnes":"Tonnes CO₂e","route":""})
+                  color_continuous_scale=[[0,"#1e3a5f"],[1,"#f59e0b"]],labels={"co2_tonnes":"kg CO₂","route":""})
         f3.update_traces(texttemplate="%{text}%",textposition="outside",textfont_color=TEXT)
         f3.update_layout(coloraxis_showscale=False,height=500)
         st.plotly_chart(T(f3,"Top 15 Routes by Emissions"),use_container_width=True)
@@ -365,7 +365,7 @@ elif page == "Scope 3 — Cat 6: Business Travel":
         f4.update_traces(texttemplate="$%{text:,.0f}",textposition="outside",showlegend=False,textfont_color=TEXT)
         st.plotly_chart(T(f4,"Invoice by Travel Mode"),use_container_width=True)
     with col2:
-        f4b=px.scatter(fdf,x="invoice_amount_usd",y="co2_tonnes",color="travel_mode",color_discrete_sequence=COLORS,opacity=0.5,trendline="ols",trendline_scope="overall",trendline_color_override="#f9fafb",labels={"invoice_amount_usd":"Invoice ($)","co2_tonnes":"Tonnes CO₂e","travel_mode":"Mode"})
+        f4b=px.scatter(fdf,x="invoice_amount_usd",y="co2_tonnes",color="travel_mode",color_discrete_sequence=COLORS,opacity=0.5,trendline="ols",trendline_scope="overall",trendline_color_override="#f9fafb",labels={"invoice_amount_usd":"Invoice ($)","co2_tonnes":"kg CO₂","travel_mode":"Mode"})
         st.plotly_chart(T(f4b,"Invoice vs Emissions"),use_container_width=True)
     cd=cm[["travel_mode","invoice","co2_tonnes","cost_per_tonne"]].copy()
     cd.columns=["Mode","Total Invoice ($)","CO₂ (t)","$/tonne CO₂e"]
@@ -391,9 +391,9 @@ elif page == "Scope 3 — Cat 7: Commute":
     st.markdown("---")
 
     k1,k2,k3,k4=st.columns(4)
-    with k1: st.metric("Total Emissions",f"{fdf['co2_tonnes'].sum():,.2f} t CO₂e")
+    with k1: st.metric("Total Emissions",f"{fdf['co2_tonnes'].sum():,.0f} kg CO₂")
     with k2: st.metric("Employees",f"{len(fdf):,}")
-    with k3: st.metric("Avg per Employee",f"{fdf['co2_tonnes'].mean()*1000:,.0f} kg CO₂e")
+    with k3: st.metric("Avg per Employee",f"{fdf['co2_tonnes'].mean():,.0f} kg CO₂")
     with k4: st.metric("Avg Round Trip",f"{fdf['round_trip_distance_miles'].mean():,.1f} miles")
     st.markdown("---")
 
@@ -411,7 +411,7 @@ elif page == "Scope 3 — Cat 7: Commute":
     with col2:
         f1b=px.bar(bm.sort_values("co2_tonnes",ascending=False),x="commute_mode",y="co2_tonnes",
                    color="commute_mode",color_discrete_sequence=COLORS,text="co2_tonnes",
-                   labels={"commute_mode":"Mode","co2_tonnes":"Tonnes CO₂e"})
+                   labels={"commute_mode":"Mode","co2_tonnes":"kg CO₂"})
         f1b.update_traces(texttemplate="%{text:,.2f}",textposition="outside",showlegend=False,textfont_color=TEXT)
         st.plotly_chart(T(f1b,"Total Emissions by Commute Mode"),use_container_width=True)
     st.dataframe(bm.rename(columns={"commute_mode":"Mode","employees":"# Employees","co2_tonnes":"CO₂ (t)","pct_employees":"% Employees","pct_emissions":"% Emissions"}),use_container_width=True,hide_index=True)
@@ -424,14 +424,14 @@ elif page == "Scope 3 — Cat 7: Commute":
     with col1:
         f2=px.bar(bw,x="co2_tonnes",y="worksite_location",orientation="h",
                   color="co2_tonnes",color_continuous_scale=[[0,"#3b1a8b"],[1,"#8b5cf6"]],
-                  text="employees",labels={"co2_tonnes":"Tonnes CO₂e","worksite_location":""})
+                  text="employees",labels={"co2_tonnes":"kg CO₂","worksite_location":""})
         f2.update_traces(texttemplate="%{text} employees",textposition="outside",textfont_color=TEXT)
         f2.update_layout(coloraxis_showscale=False)
         st.plotly_chart(T(f2,"Emissions by Worksite Location"),use_container_width=True)
     with col2:
         f2b=px.scatter(fdf,x="round_trip_distance_miles",y="co2_tonnes",color="commute_mode",
                        color_discrete_sequence=COLORS,opacity=0.5,
-                       labels={"round_trip_distance_miles":"Round Trip Distance (miles)","co2_tonnes":"Tonnes CO₂e","commute_mode":"Mode"})
+                       labels={"round_trip_distance_miles":"Round Trip Distance (miles)","co2_tonnes":"kg CO₂","commute_mode":"Mode"})
         st.plotly_chart(T(f2b,"Distance vs Emissions by Mode"),use_container_width=True)
 
 # ══════════════════════════════════════════════
@@ -464,23 +464,23 @@ elif page == "Scope 3 — Cat 9: Downstream Transport":
 
     inv_col = "invoice_amount_usd" if "invoice_amount_usd" in fdf.columns else None
     k1,k2,k3,k4=st.columns(4)
-    with k1: st.metric("Total Emissions",f"{fdf['co2_tonnes'].sum():,.2f} t CO₂e")
+    with k1: st.metric("Total Emissions",f"{fdf['co2_tonnes'].sum():,.0f} kg CO₂")
     with k2: st.metric("Shipments",f"{len(fdf):,}")
     with k3: st.metric("Avg Distance",f"{fdf['distance_traveled'].mean():,.0f} miles")
     with k4: st.metric("Total Invoice",f"${fdf[inv_col].sum():,.0f}" if inv_col else "N/A")
     st.markdown("---")
 
     # Monthly
-    fig_t=px.line(monthly_clean,x="month_label",y="co2_tonnes",markers=True,color_discrete_sequence=["#ef4444"],labels={"month_label":"","co2_tonnes":"Tonnes CO₂e"})
+    fig_t=px.line(monthly_clean,x="month_label",y="co2_tonnes",markers=True,color_discrete_sequence=["#ef4444"],labels={"month_label":"","co2_tonnes":"kg CO₂"})
     fig_t.update_traces(line_width=2.5,marker_size=7,marker_color="#ef4444",marker_line_color=BG)
-    st.plotly_chart(T(fig_t,"Monthly Downstream Emissions (tonnes CO₂e)"),use_container_width=True)
+    st.plotly_chart(T(fig_t,"Monthly Downstream Emissions (kg CO₂)"),use_container_width=True)
     st.markdown("---")
 
     # 1. Mode
     st.markdown('<div class="section-title">1. Emissions by Mode of Transport</div>',unsafe_allow_html=True)
     bm=fdf.groupby("mode_of_transport")["co2_tonnes"].sum().reset_index().sort_values("co2_tonnes",ascending=False)
     bm["mode_of_transport"]=bm["mode_of_transport"].str.capitalize()
-    f1=px.bar(bm,x="mode_of_transport",y="co2_tonnes",color="mode_of_transport",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"mode_of_transport":"Mode","co2_tonnes":"Tonnes CO₂e"})
+    f1=px.bar(bm,x="mode_of_transport",y="co2_tonnes",color="mode_of_transport",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"mode_of_transport":"Mode","co2_tonnes":"kg CO₂"})
     f1.update_traces(texttemplate="%{text:,.1f}",textposition="outside",showlegend=False,textfont_color=TEXT)
     st.plotly_chart(T(f1,"Emissions by Mode of Transport"),use_container_width=True)
     st.markdown("---")
@@ -492,7 +492,7 @@ elif page == "Scope 3 — Cat 9: Downstream Transport":
     col1,col2=st.columns([3,2])
     with col1:
         f2=px.bar(br,x="co2_tonnes",y="route",orientation="h",text="pct",color="co2_tonnes",
-                  color_continuous_scale=[[0,"#4a1010"],[1,"#ef4444"]],labels={"co2_tonnes":"Tonnes CO₂e","route":""})
+                  color_continuous_scale=[[0,"#4a1010"],[1,"#ef4444"]],labels={"co2_tonnes":"kg CO₂","route":""})
         f2.update_traces(texttemplate="%{text}%",textposition="outside",textfont_color=TEXT)
         f2.update_layout(coloraxis_showscale=False,height=500)
         st.plotly_chart(T(f2,"Top 15 Routes — % of Total Emissions"),use_container_width=True)
@@ -508,11 +508,11 @@ elif page == "Scope 3 — Cat 9: Downstream Transport":
     col1,col2=st.columns(2)
     with col1:
         if "by_volume" in agg:
-            fv=px.bar(agg["by_volume"],x="volume_bin",y="co2_tonnes",color="volume_bin",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"volume_bin":"Volume Quartile","co2_tonnes":"Tonnes CO₂e"})
+            fv=px.bar(agg["by_volume"],x="volume_bin",y="co2_tonnes",color="volume_bin",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"volume_bin":"Volume Quartile","co2_tonnes":"kg CO₂"})
             fv.update_traces(texttemplate="%{text:,.1f}",textposition="outside",showlegend=False,textfont_color=TEXT)
             st.plotly_chart(T(fv,"Emissions by Shipment Volume Quartile"),use_container_width=True)
     with col2:
-        fw=px.bar(agg["by_weight"],x="weight_bin",y="co2_tonnes",color="weight_bin",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"weight_bin":"Weight Quartile","co2_tonnes":"Tonnes CO₂e"})
+        fw=px.bar(agg["by_weight"],x="weight_bin",y="co2_tonnes",color="weight_bin",color_discrete_sequence=COLORS,text="co2_tonnes",labels={"weight_bin":"Weight Quartile","co2_tonnes":"kg CO₂"})
         fw.update_traces(texttemplate="%{text:,.1f}",textposition="outside",showlegend=False,textfont_color=TEXT)
         st.plotly_chart(T(fw,"Emissions by Shipment Weight Quartile"),use_container_width=True)
     st.markdown("---")
@@ -527,7 +527,7 @@ elif page == "Scope 3 — Cat 9: Downstream Transport":
             f4.update_traces(texttemplate="$%{text:,.0f}",textposition="outside",showlegend=False,textfont_color=TEXT)
             st.plotly_chart(T(f4,"Invoice by Transport Mode"),use_container_width=True)
         with col2:
-            f4b=px.scatter(fdf,x=inv_col,y="co2_tonnes",color="mode_of_transport",color_discrete_sequence=COLORS,opacity=0.5,trendline="ols",trendline_scope="overall",trendline_color_override="#f9fafb",labels={inv_col:"Invoice ($)","co2_tonnes":"Tonnes CO₂e","mode_of_transport":"Mode"})
+            f4b=px.scatter(fdf,x=inv_col,y="co2_tonnes",color="mode_of_transport",color_discrete_sequence=COLORS,opacity=0.5,trendline="ols",trendline_scope="overall",trendline_color_override="#f9fafb",labels={inv_col:"Invoice ($)","co2_tonnes":"kg CO₂","mode_of_transport":"Mode"})
             st.plotly_chart(T(f4b,"Invoice vs Emissions"),use_container_width=True)
         cd=cm[["mode_of_transport","invoice","co2_tonnes","cost_per_tonne"]].copy()
         cd.columns=["Mode","Total Invoice ($)","CO₂ (t)","$/tonne CO₂e"]
@@ -560,7 +560,7 @@ elif page == "Scope 1 — EV Transport":
     st.markdown("---")
 
     k1,k2,k3,k4 = st.columns(4)
-    with k1: st.metric("Total Emissions",f"{fdf['co2_tonnes'].sum():,.2f} t CO₂e")
+    with k1: st.metric("Total Emissions",f"{fdf['co2_tonnes'].sum():,.0f} kg CO₂")
     with k2: st.metric("Total Trips",f"{len(fdf):,}")
     with k3: st.metric("Total Miles",f"{fdf['distance_traveled'].sum():,.0f}")
     with k4: st.metric("Cost Analysis","N/A")
@@ -573,7 +573,7 @@ elif page == "Scope 1 — EV Transport":
     with col1:
         f1=px.bar(bv,x="vehicle_type_class_id",y="co2_tonnes",color="vehicle_type_class_id",
                   color_discrete_sequence=COLORS,text="co2_tonnes",
-                  labels={"vehicle_type_class_id":"Vehicle Type","co2_tonnes":"Tonnes CO₂e"})
+                  labels={"vehicle_type_class_id":"Vehicle Type","co2_tonnes":"kg CO₂"})
         f1.update_traces(texttemplate="%{text:,.2f}",textposition="outside",showlegend=False,textfont_color=TEXT)
         st.plotly_chart(T(f1,"Emissions by Vehicle Type"),use_container_width=True)
     with col2:
@@ -633,7 +633,7 @@ elif page == "Scope 1 — EV Transport":
     with col1:
         f4=px.bar(br,x="co2_tonnes",y="route",orientation="h",text="trips",
                   color="co2_tonnes",color_continuous_scale=[[0,"#064e4e"],[1,"#06b6d4"]],
-                  labels={"co2_tonnes":"Tonnes CO₂e","route":""})
+                  labels={"co2_tonnes":"kg CO₂","route":""})
         f4.update_traces(texttemplate="%{text} trips",textposition="outside",textfont_color=TEXT)
         f4.update_layout(coloraxis_showscale=False,height=500)
         st.plotly_chart(T(f4,"Top 15 Routes by Emissions (with trip frequency)"),use_container_width=True)

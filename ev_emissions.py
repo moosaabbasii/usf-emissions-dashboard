@@ -22,7 +22,7 @@ def preprocess(df):
     df["passenger_count"]        = pd.to_numeric(df["passenger_count"],        errors="coerce").fillna(1)
     df["idle_time_minutes"]      = pd.to_numeric(df["idle_time_minutes"],       errors="coerce").fillna(0)
     df["co2_kg"]     = df["total_emissions_kgco2"]
-    df["co2_tonnes"] = df["co2_kg"] / 1000
+    df["co2_tonnes"] = df["co2_kg"]  # display in kg CO2
     df["route"] = df["origin"] + " → " + df["destination"]
     return df
 

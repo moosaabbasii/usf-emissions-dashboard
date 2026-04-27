@@ -126,7 +126,7 @@ def calculate_emissions(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Convert to metric tons for dashboard display
-    df["co2_tonnes"] = df["co2_kg"] / 1000
+    df["co2_tonnes"] = df["co2_kg"]  # display in kg CO2
 
     return df
 

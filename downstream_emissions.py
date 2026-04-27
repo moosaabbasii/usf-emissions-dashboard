@@ -46,7 +46,7 @@ def calculate_emissions(df):
     df["mode_factor"] = df["mode_of_transport"].apply(get_ef)
     df["ton_miles"] = df["weight_short_tons"] * df["distance_traveled"]
     df["co2_kg"] = df["ton_miles"] * df["mode_factor"]
-    df["co2_tonnes"] = df["co2_kg"] / 1000
+    df["co2_tonnes"] = df["co2_kg"]  # display in kg CO2
     return df
 
 def aggregate(df):
