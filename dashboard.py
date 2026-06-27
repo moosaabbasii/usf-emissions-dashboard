@@ -12,6 +12,8 @@ from business_travel_emissions import run as run_business
 from commute_emissions import run as run_commute
 from downstream_emissions import run as run_downstream
 from ev_emissions import run as run_ev
+from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import StandardScaler
 
 st.set_page_config(page_title="Emissions Dashboard", page_icon="🌍", layout="wide")
 
@@ -75,6 +77,7 @@ with st.sidebar:
         "Scope 3 — Cat 7: Commute",
         "Scope 3 — Cat 9: Downstream Transport",
         "Scope 1 — EV Transport",
+        "🤖 ML — Anomaly Detection",
     ], label_visibility="collapsed")
     st.markdown("---")
     st.caption("USF / Patel's College\nGlobal Sustainability Research\nGHG Protocol (WRI/WBCSD)")
@@ -655,3 +658,310 @@ elif page == "Scope 1 — EV Transport":
     (gasoline_emissions_kgco2, diesel_emissions_kgco2, electric_emissions_kgco2, hybrid1_emissions_kgco2).
     Total emissions = sum of all fuel-type emission components per trip.
     </div>""", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════
+# ML — ANOMALY DETECTION PAGE
+# ══════════════════════════════════════════════
+elif page == "🤖 ML — Anomaly Detection":
+    import io
+    st.markdown("# 🤖 ML — Anomaly Detection")
+    st.markdown("*IsolationForest model detecting statistically abnormal shipments across emission, cost, and distance features*")
+    st.markdown("---")
+
+    # ── CROSS-DATASET SUMMARY TABLE ─────────────
+    st.markdown('<div class="section-title">📊 Anomaly Summary — All Datasets</div>', unsafe_allow_html=True)
+    st.markdown("<small style='color:#9ca3af'>Overview of anomalies detected across all datasets at 5% contamination rate.</small>", unsafe_allow_html=True)
+
+    summary_rows = []
+    all_keys = {"Logistics (Cat 4)":"logistics","Downstream (Cat 9)":"downstream","Business Travel (Cat 6)":"business","EV Transport (Scope 1)":"ev"}
+    for label, k in all_keys.items():
+        df_s, _ = get(k)
+        if df_s is None: continue
+        cands = ['co2_kg','co2_tonnes','total_emissions_kgco2','distance_traveled','distance_miles',
+                 'shipment_weight_lb','invoice_amount_usd','fuel_consumed_gallons','idle_time_minutes',
+                 'round_trip_distance_miles','days_onsite_per_week','miles','passenger_count']
+        avail_s = [c for c in cands if c in df_s.columns]
+        if 'co2_kg' not in avail_s and 'co2_tonnes' in avail_s:
+            df_s = df_s.copy(); df_s['co2_kg'] = df_s['co2_tonnes']; avail_s = ['co2_kg'] + avail_s
+        feats_s = avail_s[:min(4, len(avail_s))]
+        if len(feats_s) < 2: continue
+        dm = df_s[feats_s].dropna()
+        xs = StandardScaler().fit_transform(dm)
+        ps = IsolationForest(n_estimators=100, contamination=0.05, random_state=42).fit_predict(xs)
+        n_a = int((ps == -1).sum())
+        co2_col_s = 'co2_kg' if 'co2_kg' in df_s.columns else 'co2_tonnes'
+        anom_co2 = df_s.loc[dm.index[ps==-1], co2_col_s].sum() if co2_col_s in df_s.columns else 0
+        summary_rows.append({"Dataset": label, "Records": len(dm), "Anomalies": n_a,
+                              "Rate (%)": round(100*n_a/len(dm),1), "Anomalous CO₂ (kg)": round(anom_co2,1)})
+    if summary_rows:
+        sum_df = pd.DataFrame(summary_rows)
+        col1, col2 = st.columns([2,1])
+        with col1:
+            fs = px.bar(sum_df, x="Dataset", y="Anomalies", color="Dataset",
+                        color_discrete_sequence=COLORS, text="Anomalies")
+            fs.update_traces(texttemplate="%{text}", textposition="outside", showlegend=False, textfont_color=TEXT)
+            st.plotly_chart(T(fs, "Anomaly Count by Dataset"), use_container_width=True)
+        with col2:
+            st.markdown('<div class="section-title" style="margin-top:.5rem">Summary Table</div>', unsafe_allow_html=True)
+            st.dataframe(sum_df, use_container_width=True, hide_index=True)
+    st.markdown("---")
+
+    # Dataset selector
+    dataset_choice = st.selectbox("Select Dataset", [
+        "Logistics (Cat 4)",
+        "Downstream Transport (Cat 9)",
+        "Business Travel (Cat 6)",
+        "EV Transport (Scope 1)",
+    ])
+
+    contamination = st.slider(
+        "Expected anomaly rate (%)",
+        min_value=1, max_value=15, value=5, step=1,
+        help="What % of records you expect to be anomalous. Default 5% is standard."
+    ) / 100
+
+    st.markdown("---")
+
+    # Load correct dataset
+    key_map = {
+        "Logistics (Cat 4)": "logistics",
+        "Downstream Transport (Cat 9)": "downstream",
+        "Business Travel (Cat 6)": "business",
+        "EV Transport (Scope 1)": "ev",
+    }
+    key = key_map[dataset_choice]
+    df_raw, agg = get(key)
+
+    if df_raw is None:
+        st.error(f"Could not load {dataset_choice} data.")
+        st.stop()
+
+    # Select numeric features available in this dataset
+    candidate_features = [
+        'co2_kg', 'co2_tonnes', 'total_emissions_kgco2',
+        'distance_traveled', 'distance_miles', 'actual_distance_miles',
+        'shipment_weight_lb', 'shipment_weight_lbs', 'shipment_weight',
+        'invoice_amount_usd', 'freight_invoice_usd',
+        'fuel_consumed_gallons', 'fuel_gallons', 'fuel_quantity_gallons',
+        'idle_time_min', 'idle_time_minutes', 'idle_time',
+        'distance', 'miles', 'passenger_count',
+        'round_trip_distance_miles', 'days_onsite_per_week',
+    ]
+
+    available = [c for c in candidate_features if c in df_raw.columns]
+
+    # Always use co2_kg or co2_tonnes as primary
+    if 'co2_kg' not in available and 'co2_tonnes' in available:
+        df_raw = df_raw.copy()
+        df_raw['co2_kg'] = df_raw['co2_tonnes']
+        available = ['co2_kg'] + available
+
+    if len(available) < 2:
+        st.error("Not enough numeric features in this dataset for anomaly detection.")
+        st.stop()
+
+    # Let user pick features
+    default_features = available[:min(4, len(available))]
+    selected_features = st.multiselect(
+        "Features used by the model",
+        options=available,
+        default=default_features,
+        help="IsolationForest will use these columns to detect anomalies."
+    )
+
+    if len(selected_features) < 2:
+        st.warning("Select at least 2 features.")
+        st.stop()
+
+    # Run model
+    with st.spinner("Running IsolationForest..."):
+        df_model = df_raw[selected_features].dropna()
+        idx = df_model.index
+
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(df_model)
+
+        model = IsolationForest(
+            n_estimators=200,
+            contamination=contamination,
+            random_state=42
+        )
+        preds = model.fit_predict(X_scaled)
+        scores = model.decision_function(X_scaled)
+
+        df_result = df_raw.loc[idx].copy()
+        df_result['anomaly_label'] = preds
+        df_result['anomaly_score'] = scores
+        df_result['is_anomaly'] = preds == -1
+
+    n_anomalies = int(df_result['is_anomaly'].sum())
+    n_total = len(df_result)
+    pct = round(100 * n_anomalies / n_total, 1)
+
+    # Emission savings potential
+    co2_col = 'co2_kg' if 'co2_kg' in df_result.columns else ('co2_tonnes' if 'co2_tonnes' in df_result.columns else None)
+    savings_kg = 0
+    if co2_col:
+        normal_mean = df_result[df_result['is_anomaly']==False][co2_col].mean()
+        anom_mean   = df_result[df_result['is_anomaly']==True][co2_col].mean()
+        savings_kg  = max(0, (anom_mean - normal_mean) * n_anomalies)
+
+    # KPI row — now with meaningful dataset-specific values
+    k1, k2, k3, k4 = st.columns(4)
+    with k1: st.markdown(kpi("Total Records", f"{n_total:,}", "records analyzed", "#10b981"), unsafe_allow_html=True)
+    with k2: st.markdown(kpi("Anomalies Detected", f"{n_anomalies:,}", f"{pct}% of total", "#ef4444"), unsafe_allow_html=True)
+    with k3: st.markdown(kpi("Avg Anomaly CO₂", f"{df_result[df_result['is_anomaly']==True][co2_col].mean():,.0f}" if co2_col else "N/A", "kg CO₂ per record", "#f59e0b"), unsafe_allow_html=True)
+    with k4: st.markdown(kpi("Emission Savings Potential", f"{savings_kg:,.0f}", "kg CO₂ if anomalies fixed", "#8b5cf6"), unsafe_allow_html=True)
+    st.markdown("---")
+
+    # ── 1. ANOMALY SCORE DISTRIBUTION ────────────
+    st.markdown('<div class="section-title">1. Anomaly Score Distribution</div>', unsafe_allow_html=True)
+    st.markdown("<small style='color:#9ca3af'>Lower scores = more anomalous. Red bars are flagged anomalies.</small>", unsafe_allow_html=True)
+    fig_dist = go.Figure()
+    fig_dist.add_trace(go.Histogram(x=df_result[~df_result['is_anomaly']]['anomaly_score'], name='Normal', marker_color='#3b82f6', opacity=0.7, nbinsx=50))
+    fig_dist.add_trace(go.Histogram(x=df_result[df_result['is_anomaly']]['anomaly_score'],  name='Anomaly', marker_color='#ef4444', opacity=0.9, nbinsx=50))
+    fig_dist.update_layout(barmode='overlay')
+    st.plotly_chart(T(fig_dist, "Anomaly Score Distribution — Normal vs Anomalous"), use_container_width=True)
+    st.markdown("---")
+
+    # ── 2. EMISSIONS VS DISTANCE SCATTER ─────────
+    dist_col = next((c for c in ['distance_traveled','distance_miles','actual_distance_miles','miles','round_trip_distance_miles'] if c in df_result.columns), None)
+    if co2_col and dist_col:
+        st.markdown('<div class="section-title">2. Emissions vs Distance — Anomalies Highlighted</div>', unsafe_allow_html=True)
+        plot_df = df_result[[co2_col, dist_col, 'is_anomaly', 'anomaly_score']].copy()
+        plot_df['Status'] = plot_df['is_anomaly'].map({True: '🔴 Anomaly', False: '🔵 Normal'})
+        fig_scatter = px.scatter(plot_df, x=dist_col, y=co2_col, color='Status',
+            color_discrete_map={'🔴 Anomaly': '#ef4444', '🔵 Normal': '#3b82f6'},
+            opacity=0.6, hover_data=['anomaly_score'],
+            labels={dist_col: 'Distance (miles)', co2_col: 'Emissions (kg CO₂)'})
+        fig_scatter.update_traces(marker=dict(size=5))
+        st.plotly_chart(T(fig_scatter, "Emissions vs Distance — Red = flagged anomalies"), use_container_width=True)
+        st.markdown("---")
+
+    # ── 3. ANOMALIES BY MODE ──────────────────────
+    mode_col = next((c for c in ['mode_of_transport','transport_mode','travel_mode','commute_mode','fuel_type_powertrain'] if c in df_result.columns), None)
+    if mode_col:
+        st.markdown('<div class="section-title">3. Anomaly Count by Transport Mode</div>', unsafe_allow_html=True)
+        mode_anom = df_result.groupby(mode_col)['is_anomaly'].agg(['sum','count']).reset_index()
+        mode_anom.columns = [mode_col, 'anomalies', 'total']
+        mode_anom['anomaly_rate'] = (mode_anom['anomalies'] / mode_anom['total'] * 100).round(1)
+        mode_anom = mode_anom.sort_values('anomalies', ascending=False)
+        col1, col2 = st.columns(2)
+        with col1:
+            fb = px.bar(mode_anom, x=mode_col, y='anomalies', color=mode_col,
+                        color_discrete_sequence=COLORS, text='anomalies',
+                        labels={mode_col: 'Mode', 'anomalies': 'Anomaly Count'})
+            fb.update_traces(texttemplate="%{text}", textposition="outside", showlegend=False, textfont_color=TEXT)
+            st.plotly_chart(T(fb, "Anomaly Count by Mode"), use_container_width=True)
+        with col2:
+            fb2 = px.bar(mode_anom, x=mode_col, y='anomaly_rate', color=mode_col,
+                         color_discrete_sequence=COLORS, text='anomaly_rate',
+                         labels={mode_col: 'Mode', 'anomaly_rate': 'Anomaly Rate (%)'})
+            fb2.update_traces(texttemplate="%{text:.1f}%", textposition="outside", showlegend=False, textfont_color=TEXT)
+            st.plotly_chart(T(fb2, "Anomaly Rate (%) by Mode"), use_container_width=True)
+        st.markdown("---")
+
+    # ── 4. FEATURE IMPORTANCE ─────────────────────
+    st.markdown('<div class="section-title">4. Feature Contribution to Anomaly Detection</div>', unsafe_allow_html=True)
+    st.markdown("<small style='color:#9ca3af'>Shows how much each feature differs between anomalous and normal records. Higher = that feature is driving the anomaly flag.</small>", unsafe_allow_html=True)
+
+    feat_importance = []
+    for feat in selected_features:
+        if feat not in df_result.columns: continue
+        normal_mean_f = df_result[~df_result['is_anomaly']][feat].mean()
+        anom_mean_f   = df_result[df_result['is_anomaly']][feat].mean()
+        normal_std_f  = df_result[~df_result['is_anomaly']][feat].std()
+        if normal_std_f > 0:
+            z_diff = abs(anom_mean_f - normal_mean_f) / normal_std_f
+        else:
+            z_diff = 0
+        pct_diff = ((anom_mean_f - normal_mean_f) / (abs(normal_mean_f) + 1e-9)) * 100
+        feat_importance.append({"Feature": feat, "Z-Score Difference": round(z_diff, 3),
+                                 "Anomaly Mean": round(anom_mean_f, 2), "Normal Mean": round(normal_mean_f, 2),
+                                 "% Difference": round(pct_diff, 1)})
+
+    if feat_importance:
+        fi_df = pd.DataFrame(feat_importance).sort_values("Z-Score Difference", ascending=False)
+        col1, col2 = st.columns([3, 2])
+        with col1:
+            ff = px.bar(fi_df, x="Z-Score Difference", y="Feature", orientation="h",
+                        color="Z-Score Difference", color_continuous_scale=[[0,"#1e3a5f"],[1,"#ef4444"]],
+                        text="Z-Score Difference",
+                        labels={"Z-Score Difference": "Z-Score Δ (higher = stronger driver)"})
+            ff.update_traces(texttemplate="%{text:.2f}", textposition="outside", textfont_color=TEXT)
+            ff.update_layout(coloraxis_showscale=False, height=300)
+            st.plotly_chart(T(ff, "Feature Importance — Which features drive anomaly flags"), use_container_width=True)
+        with col2:
+            st.markdown('<div class="section-title" style="margin-top:.5rem">Feature Comparison</div>', unsafe_allow_html=True)
+            fi_display = fi_df[["Feature","Normal Mean","Anomaly Mean","% Difference"]].copy()
+            fi_display["% Difference"] = fi_display["% Difference"].apply(lambda x: f"+{x:.1f}%" if x > 0 else f"{x:.1f}%")
+            st.dataframe(fi_display, use_container_width=True, hide_index=True)
+    st.markdown("---")
+
+    # ── 5. CARRIER/SUPPLIER BREAKDOWN ────────────
+    carrier_col = next((c for c in ['carrier_name','supplier_id','supplier_location','carrier_type','department'] if c in df_result.columns), None)
+    if carrier_col:
+        st.markdown(f'<div class="section-title">5. Anomaly Breakdown by {carrier_col.replace("_"," ").title()}</div>', unsafe_allow_html=True)
+        carr_anom = df_result.groupby(carrier_col)['is_anomaly'].agg(['sum','count']).reset_index()
+        carr_anom.columns = [carrier_col, 'anomalies', 'total']
+        carr_anom['rate'] = (carr_anom['anomalies'] / carr_anom['total'] * 100).round(1)
+        carr_anom = carr_anom[carr_anom['anomalies'] > 0].sort_values('anomalies', ascending=False).head(15)
+        fc = px.bar(carr_anom, x=carrier_col, y='anomalies', color='rate',
+                    color_continuous_scale=[[0,"#1e3a5f"],[1,"#ef4444"]],
+                    text='anomalies', labels={carrier_col: carrier_col.replace("_"," ").title(), 'anomalies': 'Anomaly Count', 'rate': 'Rate (%)'})
+        fc.update_traces(texttemplate="%{text}", textposition="outside", textfont_color=TEXT)
+        fc.update_layout(coloraxis_colorbar=dict(title="Rate %"))
+        st.plotly_chart(T(fc, f"Top 15 {carrier_col.replace('_',' ').title()}s by Anomaly Count"), use_container_width=True)
+        st.markdown("---")
+
+    # ── 6. EMISSION SAVINGS POTENTIAL ────────────
+    if co2_col and savings_kg > 0:
+        st.markdown('<div class="section-title">6. Emission Savings Potential</div>', unsafe_allow_html=True)
+        st.markdown("<small style='color:#9ca3af'>If anomalous records were brought in line with normal averages, this is the estimated CO₂ reduction.</small>", unsafe_allow_html=True)
+
+        normal_mean_co2 = df_result[~df_result['is_anomaly']][co2_col].mean()
+        anom_mean_co2   = df_result[df_result['is_anomaly']][co2_col].mean()
+
+        sav_col1, sav_col2, sav_col3 = st.columns(3)
+        with sav_col1: st.markdown(kpi("Normal Avg Emissions", f"{normal_mean_co2:,.0f}", "kg CO₂ per record", "#10b981"), unsafe_allow_html=True)
+        with sav_col2: st.markdown(kpi("Anomaly Avg Emissions", f"{anom_mean_co2:,.0f}", "kg CO₂ per record", "#ef4444"), unsafe_allow_html=True)
+        with sav_col3: st.markdown(kpi("Total Savings Potential", f"{savings_kg:,.0f}", "kg CO₂ if anomalies fixed", "#8b5cf6"), unsafe_allow_html=True)
+
+        # Savings bar
+        sav_df = pd.DataFrame({"Category": ["Normal Average", "Anomaly Average"], "kg CO₂": [normal_mean_co2, anom_mean_co2]})
+        fsav = px.bar(sav_df, x="Category", y="kg CO₂", color="Category",
+                      color_discrete_map={"Normal Average":"#10b981","Anomaly Average":"#ef4444"},
+                      text="kg CO₂")
+        fsav.update_traces(texttemplate="%{text:,.0f}", textposition="outside", showlegend=False, textfont_color=TEXT)
+        st.plotly_chart(T(fsav, "Normal vs Anomaly Average Emissions per Record"), use_container_width=True)
+        st.markdown("---")
+
+    # ── 7. TOP ANOMALOUS RECORDS + DOWNLOAD ──────
+    st.markdown('<div class="section-title">7. Top Anomalous Records (Most Extreme First)</div>', unsafe_allow_html=True)
+    top_anom = df_result[df_result['is_anomaly']].sort_values('anomaly_score').head(20)
+    display_cols = [c for c in selected_features + ['anomaly_score'] if c in top_anom.columns]
+    if mode_col and mode_col not in display_cols: display_cols = [mode_col] + display_cols
+    if carrier_col and carrier_col not in display_cols: display_cols = [carrier_col] + display_cols
+    top_display = top_anom[display_cols].copy()
+    top_display['anomaly_score'] = top_display['anomaly_score'].round(4)
+    st.dataframe(top_display.reset_index(drop=True), use_container_width=True, hide_index=True)
+
+    # Download button — all anomalies as CSV
+    all_anom = df_result[df_result['is_anomaly']].sort_values('anomaly_score')
+    csv_buffer = io.StringIO()
+    all_anom.to_csv(csv_buffer, index=False)
+    st.download_button(
+        label=f"⬇️ Download All {n_anomalies} Anomalies as CSV",
+        data=csv_buffer.getvalue(),
+        file_name=f"anomalies_{key}_{n_anomalies}.csv",
+        mime="text/csv"
+    )
+
+    st.markdown(f"""
+    <div class="insight-box">
+    <strong>Model:</strong> IsolationForest (sklearn) — 200 estimators, contamination={contamination:.0%}, random_state=42.<br>
+    <strong>How it works:</strong> The model randomly partitions the feature space. Records isolated quickly (few splits) are anomalies — statistically different from the majority.<br>
+    <strong>Features used:</strong> {', '.join(selected_features)}<br>
+    <strong>Result:</strong> {n_anomalies:,} anomalies detected ({pct}%). Estimated savings if corrected: {savings_kg:,.0f} kg CO₂.
+    </div>""", unsafe_allow_html=True)
+
