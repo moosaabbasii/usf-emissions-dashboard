@@ -14,6 +14,7 @@ from downstream_emissions import run as run_downstream
 from ev_emissions import run as run_ev
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
+from prophet import Prophet
 
 st.set_page_config(page_title="Emissions Dashboard", page_icon="🌍", layout="wide")
 
@@ -78,6 +79,7 @@ with st.sidebar:
         "Scope 3 — Cat 9: Downstream Transport",
         "Scope 1 — EV Transport",
         "🤖 ML — Anomaly Detection",
+        "📈 ML — Emissions Forecasting",
     ], label_visibility="collapsed")
     st.markdown("---")
     st.caption("USF / Patel's College\nGlobal Sustainability Research\nGHG Protocol (WRI/WBCSD)")
@@ -965,3 +967,349 @@ elif page == "🤖 ML — Anomaly Detection":
     <strong>Result:</strong> {n_anomalies:,} anomalies detected ({pct}%). Estimated savings if corrected: {savings_kg:,.0f} kg CO₂.
     </div>""", unsafe_allow_html=True)
 
+
+# ══════════════════════════════════════════════
+# ML — EMISSIONS FORECASTING PAGE
+# ══════════════════════════════════════════════
+elif page == "📈 ML — Emissions Forecasting":
+    import io
+    import warnings
+    warnings.filterwarnings("ignore")
+
+    st.markdown("# 📈 ML — Emissions Forecasting")
+    st.markdown("*Prophet time-series model predicting future GHG emissions based on historical monthly trends*")
+    st.markdown("---")
+
+    # ── CONTROLS ──────────────────────────────
+    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
+    with col_ctrl1:
+        forecast_dataset = st.selectbox("Dataset to Forecast", [
+            "All Datasets Combined",
+            "Logistics (Cat 4)",
+            "Downstream Transport (Cat 9)",
+            "Business Travel (Cat 6)",
+            "EV Transport (Scope 1)",
+        ])
+    with col_ctrl2:
+        forecast_months = st.slider("Months to Forecast", min_value=3, max_value=24, value=12, step=3)
+    with col_ctrl3:
+        uncertainty = st.checkbox("Show Uncertainty Intervals", value=True)
+
+    st.markdown("---")
+
+    # ── HELPER: build monthly time series ─────
+    def build_monthly_series(df, co2_col, date_col):
+        df = df.copy()
+        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+        df = df.dropna(subset=[date_col, co2_col])
+        df['month'] = df[date_col].dt.to_period('M').dt.to_timestamp()
+        monthly = df.groupby('month')[co2_col].sum().reset_index()
+        monthly.columns = ['ds', 'y']
+        monthly = monthly.sort_values('ds').reset_index(drop=True)
+        return monthly
+
+    def get_raw_df(key):
+        """Load raw CSV directly for forecasting — preserves all original columns."""
+        raw_paths = {
+            "logistics":  "synthetic_logistics_emissions_data.csv",
+            "business":   "synthetic_business_travel_data_v2.csv",
+            "commute":    "synthetic_commute_data_v2.csv",
+            "downstream": "synthetic_downstream_transport_data_v2.csv",
+            "ev":         "synthetic_ev_transport_data_with_emissions.csv",
+        }
+        try:
+            return pd.read_csv(raw_paths[key])
+        except:
+            return None
+
+    def get_date_col(df):
+        for c in ['delivery_datetime','trip_start_date','trip_start_time','trip_date',
+                  'trip_start','date','Date','datetime','timestamp']:
+            if c in df.columns: return c
+        return None
+
+    def get_co2_col(df):
+        for c in ['co2_kg','co2_tonnes','total_emissions_kgco2']:
+            if c in df.columns: return c
+        return None
+
+    def get_raw_df(key):
+        raw_paths = {
+            "logistics":  "synthetic_logistics_emissions_data.csv",
+            "business":   "synthetic_business_travel_data_v2.csv",
+            "downstream": "synthetic_downstream_transport_data_v2.csv",
+            "ev":         "synthetic_ev_transport_data_with_emissions.csv",
+        }
+        try:
+            return pd.read_csv(raw_paths[key])
+        except:
+            return None
+
+    def ensure_co2(df, key):
+        df = df.copy()
+        # EV — already has total_emissions_kgco2
+        if 'total_emissions_kgco2' in df.columns:
+            df['co2_kg'] = df['total_emissions_kgco2']
+            return df
+        if 'co2_kg' in df.columns:
+            return df
+        if 'co2_tonnes' in df.columns:
+            df['co2_kg'] = df['co2_tonnes']
+            return df
+
+        MODE_F = {
+            'air': 0.255, 'road': 0.297, 'rail': 0.096, 'bus': 0.066,
+            'truck': 0.161, 'sea': 0.040, 'water': 0.077,
+            'car': 0.297, 'taxi': 0.297, 'train': 0.096,
+        }
+
+        if key == 'logistics' and 'distance_traveled' in df.columns and 'shipment_weight_lb' in df.columns:
+            mc = 'mode_of_transport' if 'mode_of_transport' in df.columns else None
+            df['co2_kg'] = df.apply(
+                lambda r: (r['shipment_weight_lb'] / 2000) * r['distance_traveled'] *
+                MODE_F.get(str(r[mc]).lower() if mc else '', 0.161), axis=1)
+
+        elif key == 'business' and 'distance_traveled' in df.columns:
+            mc = 'travel_mode' if 'travel_mode' in df.columns else None
+            df['co2_kg'] = df.apply(
+                lambda r: r['distance_traveled'] *
+                MODE_F.get(str(r[mc]).lower() if mc else '', 0.2), axis=1)
+
+        elif key == 'downstream' and 'distance_traveled' in df.columns and 'shipment_weight_lb' in df.columns:
+            mc = 'mode_of_transport' if 'mode_of_transport' in df.columns else None
+            df['co2_kg'] = df.apply(
+                lambda r: (r['shipment_weight_lb'] / 2000) * r['distance_traveled'] *
+                MODE_F.get(str(r[mc]).lower() if mc else '', 0.186), axis=1)
+
+        return df
+
+    # ── BUILD SERIES ──────────────────────────
+    key_map = {
+        "Logistics (Cat 4)": "logistics",
+        "Downstream Transport (Cat 9)": "downstream",
+        "Business Travel (Cat 6)": "business",
+        "EV Transport (Scope 1)": "ev",
+    }
+
+    series_dict = {}
+    if forecast_dataset == "All Datasets Combined":
+        combined_monthly = []
+        for k in ["logistics","downstream","business","ev"]:
+            df_s = get_raw_df(k)
+            if df_s is None: continue
+            df_s = ensure_co2(df_s, k)
+            co2_c = get_co2_col(df_s)
+            date_c = get_date_col(df_s)
+            if not co2_c or not date_c: continue
+            ms = build_monthly_series(df_s, co2_c, date_c)
+            ms['source'] = k
+            combined_monthly.append(ms)
+        if combined_monthly:
+            all_ms = pd.concat(combined_monthly)
+            combined = all_ms.groupby('ds')['y'].sum().reset_index()
+            series_dict["All Datasets Combined"] = combined
+    else:
+        k = key_map[forecast_dataset]
+        df_s = get_raw_df(k)
+        if df_s is not None:
+            df_s = ensure_co2(df_s, k)
+            co2_c = get_co2_col(df_s)
+            date_c = get_date_col(df_s)
+            if co2_c and date_c:
+                series_dict[forecast_dataset] = build_monthly_series(df_s, co2_c, date_c)
+
+    if not series_dict:
+        if forecast_dataset == "Commute (Cat 7)":
+            st.warning("⚠️ The Commute dataset does not contain a date/time column — monthly time series cannot be built. Select a different dataset.")
+        else:
+            st.error("Could not build time series — date or CO₂ column not found in selected dataset.")
+        st.stop()
+
+    for label, monthly_df in series_dict.items():
+        if len(monthly_df) < 6:
+            st.warning(f"Not enough monthly data points for {label} ({len(monthly_df)} months). Need at least 6.")
+            continue
+
+        # ── RUN PROPHET ───────────────────────
+        with st.spinner(f"Training Prophet model on {label}..."):
+            m = Prophet(
+                yearly_seasonality=True,
+                weekly_seasonality=False,
+                daily_seasonality=False,
+                interval_width=0.95,
+                changepoint_prior_scale=0.05,
+            )
+            m.fit(monthly_df)
+            future = m.make_future_dataframe(periods=forecast_months, freq='MS')
+            forecast = m.predict(future)
+
+        # Merge historical + forecast
+        hist = monthly_df.copy()
+        hist['type'] = 'Historical'
+        fc_future = forecast[forecast['ds'] > monthly_df['ds'].max()].copy()
+        fc_future['type'] = 'Forecast'
+
+        # ── KPIs ──────────────────────────────
+        last_actual = hist['y'].iloc[-1]
+        last_forecast = fc_future['yhat'].iloc[-1] if len(fc_future) > 0 else last_actual
+        avg_historical = hist['y'].mean()
+        total_forecast = fc_future['yhat'].sum()
+        trend_direction = "📈 Increasing" if last_forecast > last_actual else "📉 Decreasing"
+        pct_change = ((last_forecast - last_actual) / last_actual * 100) if last_actual != 0 else 0
+
+        k1, k2, k3, k4 = st.columns(4)
+        with k1: st.markdown(kpi("Avg Monthly (Historical)", f"{avg_historical:,.0f}", "kg CO₂", "#3b82f6"), unsafe_allow_html=True)
+        with k2: st.markdown(kpi("Last Historical Month", f"{last_actual:,.0f}", "kg CO₂", "#10b981"), unsafe_allow_html=True)
+        with k3: st.markdown(kpi(f"Forecast ({forecast_months}mo total)", f"{total_forecast:,.0f}", "kg CO₂ projected", "#f59e0b"), unsafe_allow_html=True)
+        with k4: st.markdown(kpi("Trend Direction", trend_direction, f"{pct_change:+.1f}% vs last month", "#8b5cf6"), unsafe_allow_html=True)
+        st.markdown("---")
+
+        # ── CHART 1: Full Forecast ─────────────
+        st.markdown('<div class="section-title">1. Emissions Forecast — Historical + Predicted</div>', unsafe_allow_html=True)
+
+        fig_fc = go.Figure()
+
+        # Historical line
+        fig_fc.add_trace(go.Scatter(
+            x=hist['ds'], y=hist['y'],
+            mode='lines+markers',
+            name='Historical',
+            line=dict(color='#3b82f6', width=2),
+            marker=dict(size=5, color='#3b82f6'),
+        ))
+
+        # Forecast line
+        fig_fc.add_trace(go.Scatter(
+            x=forecast['ds'], y=forecast['yhat'],
+            mode='lines',
+            name='Forecast',
+            line=dict(color='#10b981', width=2, dash='dash'),
+        ))
+
+        # Uncertainty band
+        if uncertainty:
+            fig_fc.add_trace(go.Scatter(
+                x=pd.concat([forecast['ds'], forecast['ds'][::-1]]),
+                y=pd.concat([forecast['yhat_upper'], forecast['yhat_lower'][::-1]]),
+                fill='toself',
+                fillcolor='rgba(16,185,129,0.1)',
+                line=dict(color='rgba(0,0,0,0)'),
+                name='95% Confidence',
+                showlegend=True,
+            ))
+
+        # Vertical line at forecast start
+        split_date = monthly_df['ds'].max()
+        fig_fc.add_vline(x=split_date.timestamp() * 1000, line_dash="dot", line_color=SUBTEXT,
+                         annotation_text="Forecast starts", annotation_font_color=SUBTEXT)
+
+        fig_fc.update_layout(height=420)
+        st.plotly_chart(T(fig_fc, f"Monthly Emissions Forecast — {label} (next {forecast_months} months)"), use_container_width=True)
+        st.markdown("---")
+
+        # ── CHART 2: Forecast only (zoomed) ───
+        st.markdown('<div class="section-title">2. Forecasted Period — Zoomed View</div>', unsafe_allow_html=True)
+
+        fig_zoom = go.Figure()
+        fig_zoom.add_trace(go.Scatter(
+            x=fc_future['ds'], y=fc_future['yhat'],
+            mode='lines+markers',
+            name='Forecast',
+            line=dict(color='#10b981', width=3),
+            marker=dict(size=7, color='#10b981'),
+            text=[f"{v:,.0f}" for v in fc_future['yhat']],
+            textposition='top center',
+            textfont=dict(color=TEXT, size=10),
+        ))
+        if uncertainty and len(fc_future) > 0:
+            fig_zoom.add_trace(go.Scatter(
+                x=pd.concat([fc_future['ds'], fc_future['ds'][::-1]]),
+                y=pd.concat([fc_future['yhat_upper'], fc_future['yhat_lower'][::-1]]),
+                fill='toself',
+                fillcolor='rgba(16,185,129,0.12)',
+                line=dict(color='rgba(0,0,0,0)'),
+                name='95% Confidence',
+            ))
+        fig_zoom.update_layout(height=350)
+        st.plotly_chart(T(fig_zoom, f"Forecasted Emissions — Next {forecast_months} Months"), use_container_width=True)
+        st.markdown("---")
+
+        # ── CHART 3: Trend + Seasonality ──────
+        st.markdown('<div class="section-title">3. Trend & Seasonality Components</div>', unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+
+        with col1:
+            fig_trend = go.Figure()
+            fig_trend.add_trace(go.Scatter(
+                x=forecast['ds'], y=forecast['trend'],
+                mode='lines', name='Trend',
+                line=dict(color='#f59e0b', width=2),
+            ))
+            fig_trend.update_layout(height=300)
+            st.plotly_chart(T(fig_trend, "Underlying Trend"), use_container_width=True)
+
+        with col2:
+            if 'yearly' in forecast.columns:
+                fig_seas = go.Figure()
+                seas_df = forecast[['ds','yearly']].copy()
+                seas_df['month_num'] = seas_df['ds'].dt.month
+                seas_monthly = seas_df.groupby('month_num')['yearly'].mean().reset_index()
+                month_names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+                seas_monthly['month_name'] = seas_monthly['month_num'].apply(lambda x: month_names[x-1])
+                fig_seas.add_trace(go.Bar(
+                    x=seas_monthly['month_name'], y=seas_monthly['yearly'],
+                    marker_color=['#ef4444' if v > 0 else '#10b981' for v in seas_monthly['yearly']],
+                    name='Seasonal Effect',
+                ))
+                fig_seas.update_layout(height=300)
+                st.plotly_chart(T(fig_seas, "Monthly Seasonality Effect (kg CO₂ above/below trend)"), use_container_width=True)
+
+        st.markdown("---")
+
+        # ── CHART 4: Year-over-Year comparison ─
+        st.markdown('<div class="section-title">4. Year-over-Year Emissions Comparison</div>', unsafe_allow_html=True)
+        hist['year'] = hist['ds'].dt.year
+        hist['month_name'] = hist['ds'].dt.strftime('%b')
+        hist['month_num'] = hist['ds'].dt.month
+        years = sorted(hist['year'].unique())
+
+        fig_yoy = go.Figure()
+        for i, yr in enumerate(years):
+            yr_df = hist[hist['year']==yr].sort_values('month_num')
+            fig_yoy.add_trace(go.Scatter(
+                x=yr_df['month_name'], y=yr_df['y'],
+                mode='lines+markers', name=str(yr),
+                line=dict(color=COLORS[i % len(COLORS)], width=2),
+                marker=dict(size=5),
+            ))
+        fig_yoy.update_layout(height=320)
+        st.plotly_chart(T(fig_yoy, "Year-over-Year Monthly Emissions"), use_container_width=True)
+        st.markdown("---")
+
+        # ── FORECAST TABLE + DOWNLOAD ──────────
+        st.markdown('<div class="section-title">5. Forecast Table</div>', unsafe_allow_html=True)
+        fc_table = fc_future[['ds','yhat','yhat_lower','yhat_upper']].copy()
+        fc_table.columns = ['Month','Forecasted CO₂ (kg)','Lower Bound (kg)','Upper Bound (kg)']
+        fc_table['Month'] = fc_table['Month'].dt.strftime('%B %Y')
+        fc_table['Forecasted CO₂ (kg)'] = fc_table['Forecasted CO₂ (kg)'].round(0)
+        fc_table['Lower Bound (kg)'] = fc_table['Lower Bound (kg)'].round(0)
+        fc_table['Upper Bound (kg)'] = fc_table['Upper Bound (kg)'].round(0)
+        st.dataframe(fc_table, use_container_width=True, hide_index=True)
+
+        csv_buf = io.StringIO()
+        fc_table.to_csv(csv_buf, index=False)
+        st.download_button(
+            label=f"⬇️ Download Forecast as CSV",
+            data=csv_buf.getvalue(),
+            file_name=f"forecast_{label.replace(' ','_')}_{forecast_months}mo.csv",
+            mime="text/csv"
+        )
+
+        st.markdown(f"""
+        <div class="insight-box">
+        <strong>Model:</strong> Facebook Prophet — yearly seasonality, changepoint_prior_scale=0.05, 95% confidence intervals.<br>
+        <strong>Training data:</strong> {len(monthly_df)} monthly observations.<br>
+        <strong>Forecast horizon:</strong> {forecast_months} months.<br>
+        <strong>Projected total:</strong> {total_forecast:,.0f} kg CO₂ over the forecast period.<br>
+        <strong>Trend:</strong> {trend_direction} ({pct_change:+.1f}% from last historical month to end of forecast).
+        </div>""", unsafe_allow_html=True)
