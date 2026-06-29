@@ -5,3 +5,4 @@ numpy
 statsmodels
 scipy
 scikit-learn
+prophet
