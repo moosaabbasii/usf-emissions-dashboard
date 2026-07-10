@@ -15,6 +15,9 @@ from ev_emissions import run as run_ev
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 from prophet import Prophet
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, r2_score
 
 st.set_page_config(page_title="Emissions Dashboard", page_icon="🌍", layout="wide")
 
@@ -80,6 +83,7 @@ with st.sidebar:
         "Scope 1 — EV Transport",
         "🤖 ML — Anomaly Detection",
         "📈 ML — Emissions Forecasting",
+        "🧠 ML — Emissions Prediction (XGBoost)",
     ], label_visibility="collapsed")
     st.markdown("---")
     st.caption("USF / Patel's College\nGlobal Sustainability Research\nGHG Protocol (WRI/WBCSD)")
@@ -1313,3 +1317,307 @@ elif page == "📈 ML — Emissions Forecasting":
         <strong>Projected total:</strong> {total_forecast:,.0f} kg CO₂ over the forecast period.<br>
         <strong>Trend:</strong> {trend_direction} ({pct_change:+.1f}% from last historical month to end of forecast).
         </div>""", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════
+# ML — EMISSIONS PREDICTION (XGBOOST) PAGE
+# ══════════════════════════════════════════════
+elif page == "🧠 ML — Emissions Prediction (XGBoost)":
+    import io
+    st.markdown("# 🧠 ML — Emissions Prediction")
+    st.markdown("*XGBoost regression model predicting CO₂ emissions from shipment features — learns patterns instead of using fixed emission factors*")
+    st.markdown("---")
+
+    # ── DATASET SELECTOR ──────────────────────
+    xgb_dataset = st.selectbox("Select Dataset to Train On", [
+        "Logistics (Cat 4)",
+        "Downstream Transport (Cat 9)",
+        "Business Travel (Cat 6)",
+        "EV Transport (Scope 1)",
+    ])
+
+    xgb_key_map = {
+        "Logistics (Cat 4)": "logistics",
+        "Downstream Transport (Cat 9)": "downstream",
+        "Business Travel (Cat 6)": "business",
+        "EV Transport (Scope 1)": "ev",
+    }
+    xgb_key = xgb_key_map[xgb_dataset]
+
+    # ── RAW CSV PATHS ─────────────────────────
+    xgb_raw_paths = {
+        "logistics":  "synthetic_logistics_emissions_data.csv",
+        "business":   "synthetic_business_travel_data_v2.csv",
+        "downstream": "synthetic_downstream_transport_data_v2.csv",
+        "ev":         "synthetic_ev_transport_data_with_emissions.csv",
+    }
+
+    # ── EMISSION FACTORS ──────────────────────
+    XGB_MODE_F = {
+        'air': 0.255, 'road': 0.297, 'rail': 0.096, 'bus': 0.066,
+        'truck': 0.161, 'sea': 0.040, 'water': 0.077,
+        'car': 0.297, 'taxi': 0.297, 'train': 0.096,
+        'electric': 0.05, 'hybrid': 0.15, 'gasoline': 0.297, 'diesel': 0.161,
+    }
+
+    # ── LOAD + PREPARE DATA ───────────────────
+    try:
+        df_xgb = pd.read_csv(xgb_raw_paths[xgb_key])
+    except Exception as e:
+        st.error(f"Could not load dataset: {e}")
+        st.stop()
+
+    df_xgb = df_xgb.copy()
+
+    # Compute target (co2_kg) if not present
+    if 'total_emissions_kgco2' in df_xgb.columns:
+        df_xgb['co2_kg'] = df_xgb['total_emissions_kgco2']
+    elif 'co2_kg' not in df_xgb.columns:
+        dist_c = next((c for c in ['distance_traveled','actual_distance_miles','distance_miles'] if c in df_xgb.columns), None)
+        wt_c   = next((c for c in ['shipment_weight_lb','shipment_weight_lbs'] if c in df_xgb.columns), None)
+        mode_c = next((c for c in ['mode_of_transport','travel_mode','transport_mode'] if c in df_xgb.columns), None)
+        if dist_c and wt_c and mode_c:
+            df_xgb['co2_kg'] = df_xgb.apply(
+                lambda r: (r[wt_c]/2000) * r[dist_c] * XGB_MODE_F.get(str(r[mode_c]).lower(), 0.2), axis=1)
+        elif dist_c and mode_c:
+            df_xgb['co2_kg'] = df_xgb.apply(
+                lambda r: r[dist_c] * XGB_MODE_F.get(str(r[mode_c]).lower(), 0.2), axis=1)
+        else:
+            st.error("Cannot compute emissions for this dataset — missing distance or mode column.")
+            st.stop()
+
+    # ── FEATURE ENGINEERING ───────────────────
+    # Encode categorical columns
+    cat_cols = [c for c in ['mode_of_transport','travel_mode','transport_mode',
+                             'carrier_type','fuel_type','fuel_type_powertrain',
+                             'service_class','carrier_name'] if c in df_xgb.columns]
+
+    num_cols = [c for c in ['distance_traveled','actual_distance_miles','distance_miles',
+                             'shipment_weight_lb','shipment_weight_lbs',
+                             'fuel_consumed_gallons','fuel_quantity_gallons',
+                             'electricity_kwh','idle_time_minutes','idle_time',
+                             'invoice_amount_usd','passenger_count',
+                             'round_trip_distance_miles','days_onsite_per_week',
+                             'biofuel_blend_pct'] if c in df_xgb.columns]
+
+    if len(num_cols) == 0:
+        st.error("No numeric feature columns found in this dataset.")
+        st.stop()
+
+    # Build feature df
+    feature_df = df_xgb[num_cols + cat_cols + ['co2_kg']].dropna()
+
+    # One-hot encode categoricals
+    if cat_cols:
+        feature_df = pd.get_dummies(feature_df, columns=cat_cols, drop_first=True)
+
+    feature_names = [c for c in feature_df.columns if c != 'co2_kg']
+    X = feature_df[feature_names].values
+    y = feature_df['co2_kg'].values
+
+    if len(X) < 100:
+        st.error("Not enough data to train the model.")
+        st.stop()
+
+    # ── TRAIN/TEST SPLIT ──────────────────────
+    test_size = st.slider("Test set size (%)", min_value=10, max_value=40, value=20, step=5) / 100
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
+
+    # ── TRAIN MODEL ───────────────────────────
+    with st.spinner("Training XGBoost model..."):
+        model_xgb = xgb.XGBRegressor(
+            n_estimators=300,
+            max_depth=6,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=42,
+            verbosity=0,
+        )
+        model_xgb.fit(X_train, y_train)
+        y_pred = model_xgb.predict(X_test)
+
+    # ── METRICS ───────────────────────────────
+    mae  = mean_absolute_error(y_test, y_pred)
+    r2   = r2_score(y_test, y_pred)
+    mape = float(np.mean(np.abs((y_test - y_pred) / (np.abs(y_test) + 1e-9))) * 100)
+    rmse = float(np.sqrt(np.mean((y_test - y_pred)**2)))
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1: st.markdown(kpi("R² Score", f"{r2:.4f}", "1.0 = perfect fit", "#10b981"), unsafe_allow_html=True)
+    with k2: st.markdown(kpi("MAE", f"{mae:,.1f}", "kg CO₂ avg error", "#3b82f6"), unsafe_allow_html=True)
+    with k3: st.markdown(kpi("MAPE", f"{mape:.1f}%", "mean % error", "#f59e0b"), unsafe_allow_html=True)
+    with k4: st.markdown(kpi("Training Records", f"{len(X_train):,}", f"test: {len(X_test):,}", "#8b5cf6"), unsafe_allow_html=True)
+    st.markdown("---")
+
+    # ── CHART 1: FEATURE IMPORTANCE ───────────
+    st.markdown('<div class="section-title">1. Feature Importance — What Drives Emissions?</div>', unsafe_allow_html=True)
+    st.markdown("<small style='color:#9ca3af'>Higher score = that feature has more influence on the model's CO₂ prediction.</small>", unsafe_allow_html=True)
+
+    importance_df = pd.DataFrame({
+        'Feature': feature_names,
+        'Importance': model_xgb.feature_importances_
+    }).sort_values('Importance', ascending=False).head(15)
+
+    fi_col1, fi_col2 = st.columns([3, 2])
+    with fi_col1:
+        fig_fi = px.bar(
+            importance_df, x='Importance', y='Feature', orientation='h',
+            color='Importance',
+            color_continuous_scale=[[0, '#1e3a5f'], [1, '#10b981']],
+            text='Importance',
+            labels={'Importance': 'XGBoost Importance Score'}
+        )
+        fig_fi.update_traces(texttemplate="%{text:.4f}", textposition="outside", textfont_color=TEXT)
+        fig_fi.update_layout(coloraxis_showscale=False, height=400)
+        st.plotly_chart(T(fig_fi, "Feature Importance — Top 15 Emission Drivers"), use_container_width=True)
+    with fi_col2:
+        st.markdown('<div class="section-title" style="margin-top:.5rem">Top Features</div>', unsafe_allow_html=True)
+        imp_display = importance_df.head(10).copy()
+        imp_display['Importance'] = imp_display['Importance'].round(4)
+        imp_display['Rank'] = range(1, len(imp_display)+1)
+        imp_display = imp_display[['Rank','Feature','Importance']]
+        st.dataframe(imp_display, use_container_width=True, hide_index=True)
+    st.markdown("---")
+
+    # ── CHART 2: ACTUAL vs PREDICTED ──────────
+    st.markdown('<div class="section-title">2. Actual vs Predicted Emissions</div>', unsafe_allow_html=True)
+    st.markdown("<small style='color:#9ca3af'>Points on the diagonal line = perfect prediction. Spread = model error.</small>", unsafe_allow_html=True)
+
+    pred_df = pd.DataFrame({'Actual': y_test, 'Predicted': y_pred})
+    pred_df['Error'] = pred_df['Predicted'] - pred_df['Actual']
+    pred_df['Abs Error'] = pred_df['Error'].abs()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fig_avp = px.scatter(
+            pred_df.sample(min(2000, len(pred_df)), random_state=42),
+            x='Actual', y='Predicted',
+            color='Abs Error',
+            color_continuous_scale=[[0,'#10b981'],[0.5,'#f59e0b'],[1,'#ef4444']],
+            opacity=0.6,
+            labels={'Actual': 'Actual CO₂ (kg)', 'Predicted': 'Predicted CO₂ (kg)'},
+        )
+        # Perfect prediction line
+        max_val = float(max(pred_df['Actual'].max(), pred_df['Predicted'].max()))
+        fig_avp.add_trace(go.Scatter(
+            x=[0, max_val], y=[0, max_val],
+            mode='lines', name='Perfect Fit',
+            line=dict(color='white', width=1, dash='dash')
+        ))
+        fig_avp.update_layout(height=380, coloraxis_colorbar=dict(title="Abs Error"))
+        st.plotly_chart(T(fig_avp, f"Actual vs Predicted — R²={r2:.4f}"), use_container_width=True)
+
+    with col2:
+        # Residual distribution
+        fig_res = go.Figure()
+        fig_res.add_trace(go.Histogram(
+            x=pred_df['Error'], nbinsx=50,
+            marker_color='#3b82f6', opacity=0.8, name='Residuals'
+        ))
+        fig_res.add_vline(x=0, line_dash="dash", line_color="white")
+        fig_res.update_layout(height=380)
+        st.plotly_chart(T(fig_res, "Prediction Error Distribution (Residuals)"), use_container_width=True)
+    st.markdown("---")
+
+    # ── CHART 3: PREDICTED vs ACTUAL BY MODE ──
+    mode_col_xgb = next((c for c in ['mode_of_transport','travel_mode','transport_mode','fuel_type_powertrain'] if c in df_xgb.columns), None)
+    if mode_col_xgb:
+        st.markdown('<div class="section-title">3. Prediction Accuracy by Transport Mode</div>', unsafe_allow_html=True)
+        mode_idx = feature_df.index[:len(y_test)]  # approximate
+        test_idx = feature_df.index[-len(y_test):]
+        mode_test = df_xgb.loc[df_xgb.index.isin(test_idx), mode_col_xgb].values[:len(y_test)]
+        if len(mode_test) == len(y_test):
+            mode_acc_df = pd.DataFrame({'Mode': mode_test, 'Actual': y_test, 'Predicted': y_pred})
+            mode_acc = mode_acc_df.groupby('Mode').apply(
+                lambda g: pd.Series({
+                    'MAE': mean_absolute_error(g['Actual'], g['Predicted']),
+                    'Count': len(g),
+                    'Avg Actual': g['Actual'].mean(),
+                    'Avg Predicted': g['Predicted'].mean(),
+                })
+            ).reset_index()
+            fig_mode = px.bar(
+                mode_acc, x='Mode', y='MAE', color='Mode',
+                color_discrete_sequence=COLORS, text='MAE',
+                labels={'MAE': 'Mean Absolute Error (kg CO₂)'}
+            )
+            fig_mode.update_traces(texttemplate="%{text:,.0f}", textposition="outside",
+                                   showlegend=False, textfont_color=TEXT)
+            st.plotly_chart(T(fig_mode, "MAE by Transport Mode — Lower = More Accurate"), use_container_width=True)
+            st.markdown("---")
+
+    # ── SECTION 4: LIVE PREDICTOR ─────────────
+    st.markdown('<div class="section-title">4. 🔮 Live Emissions Predictor</div>', unsafe_allow_html=True)
+    st.markdown("<small style='color:#9ca3af'>Enter shipment details below — the trained model will predict CO₂ emissions instantly.</small>", unsafe_allow_html=True)
+
+    with st.form("predictor_form"):
+        p_cols = st.columns(3)
+        user_inputs = {}
+
+        numeric_inputs = {
+            'distance_traveled': ('Distance (miles)', 500.0, 0.0, 5000.0),
+            'actual_distance_miles': ('Distance (miles)', 500.0, 0.0, 5000.0),
+            'shipment_weight_lb': ('Weight (lbs)', 5000.0, 0.0, 50000.0),
+            'shipment_weight_lbs': ('Weight (lbs)', 5000.0, 0.0, 50000.0),
+            'fuel_consumed_gallons': ('Fuel (gallons)', 50.0, 0.0, 500.0),
+            'fuel_quantity_gallons': ('Fuel (gallons)', 50.0, 0.0, 500.0),
+            'electricity_kwh': ('Electricity (kWh)', 10.0, 0.0, 500.0),
+            'idle_time_minutes': ('Idle Time (min)', 30.0, 0.0, 300.0),
+            'invoice_amount_usd': ('Invoice (USD)', 500.0, 0.0, 10000.0),
+            'passenger_count': ('Passengers', 1.0, 1.0, 50.0),
+            'biofuel_blend_pct': ('Biofuel %', 0.0, 0.0, 100.0),
+        }
+
+        col_i = 0
+        for feat in feature_names:
+            base_feat = feat.split('_')[0] if '_' in feat else feat
+            matched = next((k for k in numeric_inputs if k in feat or feat.startswith(k[:8])), None)
+            if matched and matched in numeric_inputs:
+                label, default, mn, mx = numeric_inputs[matched]
+                with p_cols[col_i % 3]:
+                    user_inputs[feat] = st.number_input(label, value=default, min_value=mn, max_value=mx)
+                col_i += 1
+                if col_i >= 9: break
+
+        submitted = st.form_submit_button("🔮 Predict Emissions")
+
+    if submitted and user_inputs:
+        input_row = np.zeros(len(feature_names))
+        for i, fname in enumerate(feature_names):
+            if fname in user_inputs:
+                input_row[i] = user_inputs[fname]
+        prediction = model_xgb.predict(input_row.reshape(1, -1))[0]
+        st.success(f"**Predicted Emissions: {prediction:,.1f} kg CO₂**")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.metric("Predicted CO₂", f"{prediction:,.1f} kg", delta=None)
+        with col_b:
+            st.metric("Equivalent to", f"{prediction/8.89:.0f} litres of gasoline burned")
+
+    st.markdown("---")
+
+    # ── CHART 5: TOP PREDICTION ERRORS ────────
+    st.markdown('<div class="section-title">5. Largest Prediction Errors</div>', unsafe_allow_html=True)
+    st.markdown("<small style='color:#9ca3af'>Records where the model was most wrong — useful for identifying edge cases.</small>", unsafe_allow_html=True)
+    top_errors = pred_df.nlargest(20, 'Abs Error')[['Actual','Predicted','Error','Abs Error']].copy()
+    top_errors = top_errors.round(2).reset_index(drop=True)
+    st.dataframe(top_errors, use_container_width=True, hide_index=True)
+
+    # Download predictions
+    csv_pred = io.StringIO()
+    pred_df.round(2).to_csv(csv_pred, index=False)
+    st.download_button(
+        label="⬇️ Download All Predictions as CSV",
+        data=csv_pred.getvalue(),
+        file_name=f"xgboost_predictions_{xgb_key}.csv",
+        mime="text/csv"
+    )
+
+    st.markdown(f"""
+    <div class="insight-box">
+    <strong>Model:</strong> XGBoost Regressor — 300 estimators, max_depth=6, learning_rate=0.05, subsample=0.8.<br>
+    <strong>Training:</strong> {len(X_train):,} records · Test: {len(X_test):,} records · Features: {len(feature_names)}<br>
+    <strong>Performance:</strong> R²={r2:.4f} · MAE={mae:,.1f} kg CO₂ · MAPE={mape:.1f}%<br>
+    <strong>Top driver:</strong> {importance_df.iloc[0]['Feature']} (importance score: {importance_df.iloc[0]['Importance']:.4f})<br>
+    <strong>Insight:</strong> The model learns emission patterns from historical data — enabling pre-shipment CO₂ prediction without fixed emission factors.
+    </div>""", unsafe_allow_html=True)
